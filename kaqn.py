@@ -66,7 +66,24 @@ def kan_train(
             1 - terminations.flatten()
         )
 
-    old_val = net(observations).gather(1, actions).squeeze()
+    # We emulate the gather function by doing for loops
+    old_val = torch.zeros(len(observations))
+    obs = net(observations)
+    dict_actions = {}
+    for i in range(len(observations)):
+        # if the action is not in the dictionary, we add it with the corresponding value in the network
+        if actions[i] not in dict_actions:
+            dict_actions[actions[i]] = obs[i]
+        else:
+            # if the action is in the dictionary, we sum the values
+            dict_actions[actions[i]] += obs[i]
+    # We convert the dictionary to a tensor
+    list_actions = list(dict_actions.values())
+    # In order to have the same shape as td_target, we sum the values along the first dimension
+    list_actions = [torch.sum(action) for action in list_actions]
+    old_val = torch.stack(list_actions)
+    # Now we squeeze to remove single dimensions
+    #old_val = old_val.squeeze()
     loss = nn.functional.mse_loss(td_target, old_val)
     reg_ = reg(net.acts_scale)
     loss = loss + lamb * reg_
@@ -94,7 +111,24 @@ def mlp_train(
             1 - terminations.flatten()
         )
 
-    old_val = net(observations).gather(1, actions).squeeze()
+    # We emulate the gather function by doing for loops
+    old_val = torch.zeros(len(observations))
+    obs = net(observations)
+    dict_actions = {}
+    for i in range(len(observations)):
+        # if the action is not in the dictionary, we add it with the corresponding value in the network
+        if actions[i] not in dict_actions:
+            dict_actions[actions[i]] = obs[i]
+        else:
+            # if the action is in the dictionary, we sum the values
+            dict_actions[actions[i]] += obs[i]
+    # We convert the dictionary to a tensor
+    list_actions = list(dict_actions.values())
+    # In order to have the same shape as td_target, we sum the values along the first dimension
+    list_actions = [torch.sum(action) for action in list_actions]
+    old_val = torch.stack(list_actions)
+    # Now we squeeze to remove single dimensions
+    #old_val = old_val.squeeze()
     loss = nn.functional.mse_loss(td_target, old_val)
     optimizer.zero_grad()
     loss.backward()
@@ -116,34 +150,68 @@ def main(config: DictConfig):
     set_all_seeds(config.seed)
     env = gym.make(config.env_id)
     if config.method == "KAN":
-        q_network = KAN(
-            width=[env.observation_space.shape[0], config.width, env.action_space.n],
-            grid=config.grid,
-            k=3,
-            bias_trainable=False,
-            sp_trainable=False,
-            sb_trainable=False,
-        )
-        target_network = KAN(
-            width=[env.observation_space.shape[0], config.width, env.action_space.n],
-            grid=config.grid,
-            k=3,
-            bias_trainable=False,
-            sp_trainable=False,
-            sb_trainable=False,
-        )
+        # If env has discrete action space, then we leave action_space.n as it is
+        # If it is not, we change it to action_space.shape[0]
+        if env.action_space.dtype == int:
+            q_network = KAN(
+                width=[env.observation_space.shape[0], config.width, env.action_space.n],
+                grid=config.grid,
+                k=3,
+                bias_trainable=False,
+                sp_trainable=False,
+                sb_trainable=False,
+            )
+            target_network = KAN(
+                width=[env.observation_space.shape[0], config.width, env.action_space.n],
+                grid=config.grid,
+                k=3,
+                bias_trainable=False,
+                sp_trainable=False,
+                sb_trainable=False,
+            )
+        else:
+            q_network = KAN(
+                width=[env.observation_space.shape[0], config.width, env.action_space.shape[0]],
+                grid=config.grid,
+                k=3,
+                bias_trainable=False,
+                sp_trainable=False,
+                sb_trainable=False,
+            )
+            target_network = KAN(
+                width=[env.observation_space.shape[0], config.width, env.action_space.shape[0]],
+                grid=config.grid,
+                k=3,
+                bias_trainable=False,
+                sp_trainable=False,
+                sb_trainable=False,
+            )
         train = kan_train
     elif config.method == "MLP":
-        q_network = nn.Sequential(
-            nn.Linear(env.observation_space.shape[0], config.width),
-            nn.ReLU(),
-            nn.Linear(config.width, env.action_space.n),
-        )
-        target_network = nn.Sequential(
-            nn.Linear(env.observation_space.shape[0], config.width),
-            nn.ReLU(),
-            nn.Linear(config.width, env.action_space.n),
-        )
+        # If env has discrete action space, then we leave action_space.n as it is
+        # If it is not, we change it to action_space.shape[0]
+        if env.action_space.dtype == int:
+            q_network = nn.Sequential(
+                nn.Linear(env.observation_space.shape[0], config.width),
+                nn.ReLU(),
+                nn.Linear(config.width, env.action_space.n),
+            )
+            target_network = nn.Sequential(
+                nn.Linear(env.observation_space.shape[0], config.width),
+                nn.ReLU(),
+                nn.Linear(config.width, env.action_space.n),
+            )
+        else:
+            q_network = nn.Sequential(
+                nn.Linear(env.observation_space.shape[0], config.width),
+                nn.ReLU(),
+                nn.Linear(config.width, env.action_space.shape[0]),
+            )
+            target_network = nn.Sequential(
+                nn.Linear(env.observation_space.shape[0], config.width),
+                nn.ReLU(),
+                nn.Linear(config.width, env.action_space.shape[0]),
+            )
         train = mlp_train
     else:
         raise Exception(
@@ -161,7 +229,9 @@ def main(config: DictConfig):
         f.write("episode,length\n")
 
     optimizer = torch.optim.Adam(q_network.parameters(), config.learning_rate)
-    buffer = ReplayBuffer(config.replay_buffer_capacity, env.observation_space.shape[0])
+    buffer = ReplayBuffer(capacity=config.replay_buffer_capacity,
+                          observation_dim=env.observation_space.shape[0],
+                          action_dim=env.action_space.n if env.action_space.dtype == int else env.action_space.shape[0])
 
     writer.add_text(
         "hyperparameters",
@@ -180,16 +250,23 @@ def main(config: DictConfig):
             if episode < config.warm_up_episodes:
                 action = env.action_space.sample()
             else:
-                action = (
-                    q_network(observation.unsqueeze(0).double())
-                    .argmax(axis=-1)
-                    .squeeze()
-                    .item()
-                )
+                network_values = q_network(observation.unsqueeze(0).float()) # This was .double() before
+                # .argmax(axis=-1)
+                # .squeeze()
+                # .item()
+                
+                # To match up with the sampled action on the if statement above, 
+                # we need to convert the network_values to a float32 array of shape (8,)
+                action = network_values.squeeze().float().detach().numpy()
+                
             next_observation, reward, terminated, truncated, info = env.step(action)
             if config.env_id == "CartPole-v1":
                 reward = -1 if terminated else 0
             next_observation = torch.from_numpy(next_observation)
+
+            # If the action space is not discrete, we need to convert the action to a tensor
+            if env.action_space.dtype != int:
+                action = torch.from_numpy(action).float()
 
             buffer.add(observation, action, next_observation, reward, terminated)
 
