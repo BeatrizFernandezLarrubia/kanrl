@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from agent import Agent
 from actor import *
 from kan import KAN
+from fasterkan.fasterkan import FasterKAN, FasterKANvolver
 from tqdm import tqdm
 
 def run_episode(
@@ -65,14 +66,14 @@ def run_episode(
         agent.writer.add_scalar("loss", loss_value, episode_index)
         agent.writer.add_scalar("reward", net_reward, episode_index)
 
-        if (
-            episode_index % 5 == 0
-            and agent.config.method == "KAN"
-            and episode_index < int(agent.config.train_n_episodes * (1 / 2))
-        ):
-            combined_input = torch.cat([agent.buffer.observations[: len(agent.buffer)], agent.buffer.actions[: len(agent.buffer)]], axis=1)
-            agent.q_network.update_grid_from_samples(combined_input)
-            agent.target_network.update_grid_from_samples(combined_input)
+        # if (
+        #     episode_index % 5 == 0
+        #     and agent.config.method == "KAN"
+        #     and episode_index < int(agent.config.train_n_episodes * (1 / 2))
+        # ):
+        #     combined_input = torch.cat([agent.buffer.observations[: len(agent.buffer)], agent.buffer.actions[: len(agent.buffer)]], axis=1).to(agent. device)
+        #     agent.q_network.update_grid_from_samples(combined_input)
+        #     agent.target_network.update_grid_from_samples(combined_input)
 
         if episode_index+1 % agent.config.policy_update_frequency == 0:
             agent.soft_update()
@@ -83,13 +84,13 @@ def train(env, agent, deterministic= True, do_training=True, rendering=True):
     for episode in tqdm(range(agent.config.train_n_episodes), desc=f"{agent.run_name}"):
         agent = run_episode(episode, env, agent, deterministic=deterministic, do_training=do_training, rendering=rendering)
         if episode+1 % 10 == 0:
-            torch.save(agent.target_actor.state_dict(), f"{agent.config.env_id}_{agent.config.method}.pt")
+            torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.config.env_id}_{agent.config.method}.pt")
 
-    torch.save(agent.target_actor.state_dict(), f"{agent.run_name}.pt")
+    torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.run_name}.pt")
     # agent.target_actor.save_ckpt(f"{agent.config.env_id}_{agent.config.method}.pt")
-    if agent.config.method == "KAN":
-        agent.target_network.plot()
-        plt.savefig(f"{agent.run_name}.png")
+    # if agent.config.method == "KAN":
+    #     agent.target_network.plot()
+    #     plt.savefig(f"{agent.config.plots_dir}/{agent.run_name}.png")
     
 def set_all_seeds(seed):
     random.seed(seed)
@@ -122,30 +123,38 @@ def main():
     print(f"Running on device: {device_name}")
     device = torch.device(device_name)
 
+    os.makedirs(config.results_dir, exist_ok=True)
+    os.makedirs(config.plots_dir, exist_ok=True)
+    os.makedirs(config.runs_dir, exist_ok=True)
+    os.makedirs(config.models_dir, exist_ok=True)
+    os.makedirs(config.figures_dir, exist_ok=True)
+
     set_all_seeds(config.seed)
-    env = gym.make(config.env_id, render_mode='human')
+    env = gym.make(config.env_id, render_mode='human', healthy_reward=0.1)
 
     network_in = env.observation_space.shape[0] + env.action_space.shape[0]
     
     if config.method == "KAN":
-        q_network = KAN(
-			width=[network_in, config.width, 1],
-			grid=config.grid,
-			k=3,
-			bias_trainable=False,
-			sp_trainable=False,
-			sb_trainable=False,
-            device=device_name
-		)
-        target_network = KAN(
-			width=[network_in, config.width, 1],
-			grid=config.grid,
-			k=3,
-			bias_trainable=False,
-			sp_trainable=False,
-			sb_trainable=False,
-            device=device_name
-		)
+        q_network = FasterKAN(
+			layers_hidden=[network_in, config.width, 1],
+			num_grids=config.grid,
+			exponent=3,
+            train_grid = True
+			# bias_trainable=False,
+			# sp_trainable=False,
+			# sb_trainable=False,
+            # device=device_name
+		).to(device)
+        target_network = FasterKAN(
+			layers_hidden=[network_in, config.width, 1],
+			num_grids=config.grid,
+			exponent=3,
+            train_grid = True
+			# bias_trainable=False,
+			# sp_trainable=False,
+			# sb_trainable=False,
+            # device=device_name
+		).to(device)
     elif config.method == "MLP":
         q_network = nn.Sequential(
             nn.Linear(network_in, config.width),
@@ -162,19 +171,24 @@ def main():
             f"Method {config.method} don't exist, choose between MLP and KAN."
         )
     
-    actor = Policy_MLP(env, device)
-    target_actor = Policy_MLP(env, device)
-    agent = Agent(env, q_network, target_network, actor, target_actor, device, config)
+    
 
     if config.train:
+        actor = Policy_MLP(env, device)
+        target_actor = Policy_MLP(env, device)
+        agent = Agent(env, q_network, target_network, actor, target_actor, device, config)
         train(env, agent, deterministic=False, do_training=True, rendering=True)
 
     if config.test:
-        # agent.target_actor.load_state_dict(torch.load(f"{agent.run_name}.pt"))
-        agent.target_actor.load_state_dict(torch.load(f"KAN_Ant-v4_0_1720045570.pt"))
+        
+        actor = Policy_MLP(env, device)
+        target_actor = Policy_MLP(env, device)
+        agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}.pt"))
+        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_Ant-v4_0_1720285912.pt"))
 
         for i in range(config.test_n_episodes):
-            run_episode(i, env, agent, deterministic=True, do_training=False, rendering=True)
+            run_episode(i, env, agent2, deterministic=True, do_training=False, rendering=True)
 
 if __name__ == "__main__":
     main()

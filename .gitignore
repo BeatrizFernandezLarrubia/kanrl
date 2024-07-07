@@ -9,3 +9,12 @@ runs/
 figures/
 datasets/
 videos/
+.venv*/
+model_ckpt/
+kaqn copy *.py
+interpretable/
+render_test.py
+plot.py
+*.png
+models/
+plots/

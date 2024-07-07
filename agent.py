@@ -19,17 +19,17 @@ class Agent:
         self.q_network = q_network.to(device)
         self.target_network = target_network.to(device)
         self.actor = actor.to(device)
-        self.target_actor = actor.to(device)
+        self.target_actor = target_actor.to(device)
         
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.target_actor.load_state_dict(self.actor.state_dict())
 
         self.run_name = f"{config.method}_{config.env_id}_{config.seed}_{int(time.time())}"
 
-        self.writer = SummaryWriter(f"runs/{self.run_name}")
+        self.writer = SummaryWriter(f"{self.config.runs_dir}/{self.run_name}")
 
-        os.makedirs("results", exist_ok=True)
-        with open(f"results/{self.run_name}.csv", "w") as f:
+        
+        with open(f"{self.config.results_dir}/{self.run_name}.csv", "w") as f:
             f.write("episode,length,reward\n")
 
         self.loss_function = torch.nn.MSELoss()

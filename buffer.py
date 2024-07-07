@@ -15,7 +15,6 @@ class ReplayBuffer:
 
     def add(self, observation, action, next_observation, reward, termination):
         index = self.cursor % self.capacity
-
         self.observations[index] = observation
         self.actions[index] = action
         self.next_observations[index] = next_observation
@@ -25,7 +24,7 @@ class ReplayBuffer:
         self.cursor += 1
 
     def sample(self, batch_size):
-        idx = np.random.permutation(np.arange(len(self)))[:batch_size]
+        idx = np.random.choice(min(self.cursor, self.capacity), batch_size)
         return (
             self.observations[idx],
             self.actions[idx],
