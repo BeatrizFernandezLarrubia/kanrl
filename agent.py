@@ -1,4 +1,5 @@
 import os
+import math
 import time
 import torch
 import numpy as np
@@ -13,8 +14,11 @@ class Agent:
         self.env = env
         self.config = config
         self.device = device
-    
-        self.action_space_n = env.action_space.shape[0]
+
+        if env.action_space.dtype == int:
+            self.action_space_n = env.action_space.n
+        else:
+            self.action_space_n = env.action_space.shape[0]
 
         self.q_network = q_network.to(device)
         self.target_network = target_network.to(device)
@@ -30,7 +34,7 @@ class Agent:
 
         
         with open(f"{self.config.results_dir}/{self.run_name}.csv", "w") as f:
-            f.write("episode,length,reward\n")
+            f.write("episode,length,reward,loss\n")
 
         self.loss_function = torch.nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), config.learning_rate)
@@ -47,6 +51,8 @@ class Agent:
             "|param|value|\n|-|-|\n%s"
             % ("\n".join([f"|{key}|{value}|" for key, value in vars(config).items()])),
         )
+
+        self.reset_for_train()
 
     def reg(self,
             acts_scale,
@@ -89,41 +95,56 @@ class Agent:
             aux2 = (1 - self.config.tau) * target_param.data
             target_param.data.copy_(aux1 + aux2)
 
-    def train(self, observation, action, next_observation, reward, terminated):
-        # print("Bufer comparison", len(self.buffer),self.config.batch_size)
-        self.buffer.add(observation, action, next_observation, reward, terminated)
-        for ts in range(self.config.train_steps):
-            observations, actions, next_observations, rewards, terminations = self.buffer.sample(self.config.batch_size)
-            observations = observations.to(self.device)
-            actions = actions.to(self.device)
-            next_observations = next_observations.to(self.device)
-            rewards = rewards.to(self.device)
-            terminations = terminations.to(self.device)
+    def reset_for_train(self):
+        self.counter = 0
+        self.previous_loss = 9999
+        self.current_loss = 9999
+        self.terminate_training = False
 
-            with torch.no_grad():
-                next_state_actions = self.actor(next_observations)
-                network_input = torch.cat([next_observations, next_state_actions], axis=1).to(self.device)
-                q_next_target = self.target_network(network_input)
-                next_q_values = rewards.flatten() + (1 - terminations.flatten()) * self.config.gamma * (q_next_target).view(-1)
-            q_values = self.q_network(torch.cat([observations, actions], axis=1).to(self.device)).view(-1)
+    def check_early_stopping(self):
+        if (self.current_loss - self.previous_loss) > self.config.max_delta_loss:
+            self.counter +=1
+            if self.counter >= self.config.tolerance:
+                self.terminate_training = True
+        else:
+            self.counter = 0
 
-            loss = self.loss_function(q_values, next_q_values)
-            
-            if self.method == "KAN":
-                loss = loss + self.reg(self.q_network.acts_scale)
+    def train(self, episode_index):
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+        actor_loss = None
+        
+        observations, actions, next_observations, rewards, terminations = self.buffer.sample(self.config.batch_size)
+        observations = observations.to(self.device)
+        actions = actions.to(self.device)
+        next_observations = next_observations.to(self.device)
+        rewards = rewards.to(self.device)
+        terminations = terminations.to(self.device)
+
+        with torch.no_grad():
+            next_state_actions = self.actor(next_observations)
+            network_input = torch.cat([next_observations, next_state_actions], axis=1).to(self.device)
+            q_next_target = self.target_network(network_input)
+            next_q_values = rewards.flatten() + (1 - terminations.flatten()) * self.config.gamma * (q_next_target).view(-1)
+        q_values = self.q_network(torch.cat([observations, actions], axis=1).to(self.device)).view(-1)
+
+        loss = self.loss_function(q_values, next_q_values)
+        
+        if self.method == "KAN":
+            loss = loss + self.reg(self.q_network.acts_scale)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        if math.remainder(episode_index+1, self.config.policy_update_frequency) == 0:
             actor_loss = -self.q_network(torch.cat([observations, self.actor(observations)], axis=1)).mean()
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             self.actor_optimizer.step()
 
-            if ts == self.config.train_steps-1:
-                return loss.item()
-            else:
-                continue
+            self.soft_update()
+
+        return loss, actor_loss
     
     def act(self, observation, deterministic, random_probability=[]):
         r = np.random.uniform()
@@ -133,7 +154,7 @@ class Agent:
             ).detach().cpu().numpy().ravel()
         else:
             # Sample random action
-            action_output = np.random.rand(self.action_space_n)
+            action_output = self.env.action_space.sample()
 
         return action_output
 
