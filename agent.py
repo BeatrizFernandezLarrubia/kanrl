@@ -131,6 +131,8 @@ class Agent:
         
         if self.method == "KAN":
             loss = loss + self.reg(self.q_network.acts_scale)
+        elif self.method == "EfficientKAN":
+            loss = loss + self.q_network.regularization_loss()
 
         self.optimizer.zero_grad()
         loss.backward()

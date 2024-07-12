@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from agent import Agent
 from actor import *
 from kan import KAN
+from efficient_kan.kan import KAN as EfficientKAN
 from fasterkan.fasterkan import FasterKAN, FasterKANvolver
 from tqdm import tqdm
 from continuous_cartpole import *
@@ -22,7 +23,8 @@ def run_episode(
         do_training=True, 
         deterministic=True, 
         rendering=True, 
-        random_probability=[]
+        random_probability=[],
+        log=True
         ):
     
     observation, info = env.reset()
@@ -70,8 +72,9 @@ def run_episode(
         print("Actor Loss:", actor_loss_value)
         print("Episode length:", episode_length)
 
-    with open(f"{agent.config.results_dir}/{agent.run_name}.csv", "a") as f:
-        f.write(f"{episode_index},{episode_length},{net_reward},{loss_value}\n")
+    if log:
+        with open(f"{agent.config.results_dir}/{agent.run_name}.csv", "a") as f:
+            f.write(f"{episode_index},{episode_length},{net_reward},{loss_value}\n")
 
     if do_training and loss_value is not None:
         agent.writer.add_scalar("episode_length", episode_length, episode_index)
@@ -85,12 +88,16 @@ def run_episode(
 
         if (
             math.remainder(episode_index+1, agent.config.grid_update_frequency) == 0
-            and agent.config.method == "KAN"
             and episode_index < int(agent.config.train_n_episodes * (1 / 2))
         ):
-            combined_input = torch.cat([agent.buffer.observations[: len(agent.buffer)], agent.buffer.actions[: len(agent.buffer)]], axis=1).to(agent.device)
-            agent.q_network.update_grid_from_samples(combined_input)
-            agent.target_network.update_grid_from_samples(combined_input)
+            if agent.config.method == "KAN":
+                combined_input = torch.cat([agent.buffer.observations[: len(agent.buffer)], agent.buffer.actions[: len(agent.buffer)]], axis=1).to(agent.device)
+                agent.q_network.update_grid_from_samples(combined_input)
+                agent.target_network.update_grid_from_samples(combined_input)
+            elif agent.config.method == "EfficientKAN":
+                combined_input = torch.cat([agent.buffer.observations[: len(agent.buffer)], agent.buffer.actions[: len(agent.buffer)]], axis=1).to(agent.device)
+                agent.q_network(combined_input, update_grid=True)
+                agent.target_network(combined_input, update_grid=True)
 
     return agent
 
@@ -102,6 +109,9 @@ def train(env, agent, deterministic= True, do_training=True, rendering=True):
         if math.remainder(episode+1, 10) == 0:
             # print("Saving model...")
             torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.run_name}.pt")
+        if math.remainder(episode+1, 100) == 0:
+            print("Testing model...")
+            run_episode(episode, env, agent, deterministic=True, do_training=False, rendering=False, log=False)
 
     if not agent.terminate_training:
         torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.run_name}.pt")
@@ -179,6 +189,25 @@ def main():
 			sb_trainable=False,
             device=device_name
 		)
+    elif config.method == "EfficientKAN":
+        q_network = EfficientKAN(
+			layers_hidden=[network_in, config.width, 1],
+			grid_size=config.grid,
+			spline_order=3,
+			# bias_trainable=False,
+			# sp_trainable=False,
+			# sb_trainable=False,
+            # device=device_name
+		).to(device)
+        target_network = EfficientKAN(
+			layers_hidden=[network_in, config.width, 1],
+			grid_size=config.grid,
+			spline_order=3,
+			# bias_trainable=False,
+			# sp_trainable=False,
+			# sb_trainable=False,
+            # device=device_name
+		).to(device)
     elif config.method == "FasterKAN":
         q_network = FasterKAN(
 			layers_hidden=[network_in, config.width, 1],
