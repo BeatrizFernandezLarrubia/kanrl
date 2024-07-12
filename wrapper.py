@@ -36,7 +36,7 @@ class TransformObservation(gym.ObservationWrapper, gym.utils.RecordConstructorAr
         self.f = f
 
     def observation(self, observation):
-        """Transforms the observations with callable :attr:`f`.
+        """Add noise to the observation by creating new observations that are given by noise concatenated to the original observation.
 
         Args:
             observation: The observation to transform

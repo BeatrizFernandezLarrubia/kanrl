@@ -31,3 +31,4 @@ action_buffer: 5
 tolerance: 5
 max_delta_loss: 0.05
 grid_update_frequency: 25
+dimension_wrapper_number: 5

@@ -164,13 +164,15 @@ def main():
         env = ContinuousCartPoleEnv()
     else:
         env = gym.make(config.env_id, render_mode="rgb_array")
-        
-    env = TransformObservation(env, lambda obs: obs.astype(np.float32))
+    
+    # The lambda function will take a number of dimensions and create noise for each dimension, and concatenate them to the original observation.
+    dimension_wrapper_number = config.dimension_wrapper_number
+    env = TransformObservation(env, lambda obs: np.concatenate(obs, [0.1 * np.random.randn() for _ in range(dimension_wrapper_number)]))
 
     if env.action_space.dtype == int:
-        network_in = env.observation_space.shape[0] + env.action_space.n
+        network_in = (env.observation_space.shape[0] + dimension_wrapper_number) + env.action_space.n
     else:
-        network_in = env.observation_space.shape[0] + env.action_space.shape[0]
+        network_in = (env.observation_space.shape[0] + dimension_wrapper_number) + env.action_space.shape[0]
     print(f"Observation space: {env.observation_space}\nAction space: {env.action_space}\nNetwork in: {network_in}")
     
     if config.method == "KAN":
