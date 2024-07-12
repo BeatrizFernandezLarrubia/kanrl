@@ -15,6 +15,7 @@ from efficient_kan.kan import KAN as EfficientKAN
 from fasterkan.fasterkan import FasterKAN, FasterKANvolver
 from tqdm import tqdm
 from continuous_cartpole import *
+from wrapper import TransformObservation
 
 def run_episode(
         episode_index, 
@@ -163,6 +164,8 @@ def main():
         env = ContinuousCartPoleEnv()
     else:
         env = gym.make(config.env_id, render_mode="rgb_array")
+        
+    env = TransformObservation(env, lambda obs: obs.astype(np.float32))
 
     if env.action_space.dtype == int:
         network_in = env.observation_space.shape[0] + env.action_space.n
