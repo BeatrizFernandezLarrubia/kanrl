@@ -16,6 +16,7 @@ import hydra
 from omegaconf import DictConfig
 from tqdm import tqdm
 import torch.nn.functional as F
+from continuous_cartpole import ContinuousCartPoleEnv
 
 POLICY_UPDATE_FREQUENCY = 2
 EXPLORATION_NOISE = 0.1
@@ -101,41 +102,44 @@ def kan_train(
 
         return reg_
 
-    observations, actions, next_observations, rewards, terminations = data
-
+    observations, actions, next_observations, rewards, terminations = data # data is already a sample from the buffer
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    observations = observations.to(device)
+    actions = actions.to(device)
+    next_observations = next_observations.to(device)
+    rewards = rewards.to(device)
+    terminations = terminations.to(device)
+    
     with torch.no_grad():
-        next_q_values = net(next_observations)
-        next_actions = next_q_values.argmax(dim=1)
-        next_q_values_target = target(next_observations)
-        target_max = next_q_values_target[range(len(next_q_values)), next_actions]
-        td_target = rewards.flatten() + gamma * target_max * (
-            1 - terminations.flatten()
-        )
-
-    # We emulate the gather function by doing for loops
-    old_val = torch.zeros(len(observations))
-    obs = net(observations)
-    dict_actions = {}
-    for i in range(len(observations)):
-        # if the action is not in the dictionary, we add it with the corresponding value in the network
-        if actions[i] not in dict_actions:
-            dict_actions[actions[i]] = obs[i]
-        else:
-            # if the action is in the dictionary, we sum the values
-            dict_actions[actions[i]] += obs[i]
-    # We convert the dictionary to a tensor
-    list_actions = list(dict_actions.values())
-    # In order to have the same shape as td_target, we sum the values along the first dimension
-    list_actions = [torch.sum(action) for action in list_actions]
-    old_val = torch.stack(list_actions)
-    # Now we squeeze to remove single dimensions
-    #old_val = old_val.squeeze()
-    loss = nn.functional.mse_loss(td_target, old_val)
+        next_state_actions = actor(next_observations)
+        qf1_next_target = target(next_observations, next_state_actions)
+        next_q_value = rewards.flatten() + (1 - terminations.flatten()) * gamma * (qf1_next_target).view(-1)
+        
+    old_val = net(observations, actions).view(-1)
+    loss = F.mse_loss(old_val, next_q_value)
+    
     reg_ = reg(net.acts_scale)
     loss = loss + lamb * reg_
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+    
+    if episode % POLICY_UPDATE_FREQUENCY == 0:
+        actor_loss = -net(observations, actor(observations)).mean()
+        actor_optimizer.zero_grad()
+        actor_loss.backward()
+        actor_optimizer.step()
+        
+        for param, target_param in zip(actor.parameters(), target_actor.parameters()):
+            aux1 = 0.01 * param.data
+            aux2 = (1 - 0.01) * target_param.data
+            target_param.data.copy_(aux1 + aux2)
+        for param, target_param in zip(net.parameters(), target.parameters()):
+            aux1 = 0.01 * param.data
+            aux2 = (1 - 0.01) * target_param.data
+            target_param.data.copy_(aux1 + aux2)
+            
     return loss.item()
 
 
@@ -202,7 +206,7 @@ def set_all_seeds(seed):
 def main(config: DictConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_all_seeds(config.seed)
-    env = gym.make(config.env_id)
+    env = ContinuousCartPoleEnv()
     if config.method == "KAN":
         # If env has discrete action space, then we leave action_space.n as it is
         # If it is not, we change it to action_space.shape[0]
