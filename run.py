@@ -13,8 +13,11 @@ from actor import *
 from kan import KAN
 from efficient_kan.kan import KAN as EfficientKAN
 from fasterkan.fasterkan import FasterKAN, FasterKANvolver
+from fastkan.fastkan import FastKAN
 from tqdm import tqdm
 from continuous_cartpole import *
+from morphing_agents.mujoco.ant.env import MorphingAntEnv
+
 
 def run_episode(
         episode_index, 
@@ -22,7 +25,7 @@ def run_episode(
         agent, 
         do_training=True, 
         deterministic=True, 
-        rendering=True, 
+        rendering=False, 
         random_probability=[],
         log=True
         ):
@@ -84,7 +87,7 @@ def run_episode(
         if agent.current_loss != 9999:
             agent.previous_loss = agent.current_loss
         agent.current_loss = loss_value
-        agent.check_early_stopping()
+        # agent.check_early_stopping()
 
         if (
             math.remainder(episode_index+1, agent.config.grid_update_frequency) == 0
@@ -101,7 +104,7 @@ def run_episode(
 
     return agent
 
-def train(env, agent, deterministic= True, do_training=True, rendering=True):
+def train(env, agent, deterministic= True, do_training=True, rendering=False):
     agent.reset_for_train()
     for episode in tqdm(range(agent.config.train_n_episodes), desc=f"{agent.run_name}"):
         if agent.terminate_training: break
@@ -109,7 +112,7 @@ def train(env, agent, deterministic= True, do_training=True, rendering=True):
         if math.remainder(episode+1, 10) == 0:
             # print("Saving model...")
             torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.run_name}.pt")
-        if math.remainder(episode+1, 100) == 0:
+        if math.remainder(episode+1, 50) == 0:
             print("Testing model...")
             run_episode(episode, env, agent, deterministic=True, do_training=False, rendering=False, log=False)
 
@@ -161,6 +164,10 @@ def main():
     print(f"Running environment - {config.env_id}")
     if config.env_id in ["ContinuousCartPoleEnv"]:
         env = ContinuousCartPoleEnv()
+    elif config.env_id in ["MorphingAnt"]:
+        env = MorphingAntEnv(num_legs=config.num_legs, expose_design=False, centered=False)
+    elif config.env_id in ["Ant-v4"]:
+        env = gym.make(config.env_id, healthy_reward=0.01)
     else:
         env = gym.make(config.env_id, render_mode="rgb_array")
 
@@ -208,22 +215,22 @@ def main():
 			# sb_trainable=False,
             # device=device_name
 		).to(device)
-    elif config.method == "FasterKAN":
-        q_network = FasterKAN(
+    elif config.method == "FastKAN":
+        q_network = FastKAN(
 			layers_hidden=[network_in, config.width, 1],
 			num_grids=config.grid,
-			exponent=3,
-            train_grid = True
+			# exponent=3,
+            # train_grid = True
 			# bias_trainable=False,
 			# sp_trainable=False,
 			# sb_trainable=False,
             # device=device_name
 		).to(device)
-        target_network = FasterKAN(
+        target_network = FastKAN(
 			layers_hidden=[network_in, config.width, 1],
 			num_grids=config.grid,
-			exponent=3,
-            train_grid = True
+			# exponent=3,
+            # train_grid = True
 			# bias_trainable=False,
 			# sp_trainable=False,
 			# sb_trainable=False,
@@ -258,7 +265,7 @@ def main():
         target_actor = Policy_MLP(env, device)
         agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
         agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}.pt"))
-        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_CartPole-v1_0_1720385960.pt"))
+        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_Ant-v4_0_1720960350.pt"))
 
         for i in range(config.test_n_episodes):
             run_episode(i, env, agent2, deterministic=True, do_training=False, rendering=False)
