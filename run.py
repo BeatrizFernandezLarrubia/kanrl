@@ -16,6 +16,8 @@ from fasterkan.fasterkan import FasterKAN, FasterKANvolver
 from tqdm import tqdm
 from continuous_cartpole import *
 from wrapper import TransformObservation
+os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+
 
 def run_episode(
         episode_index, 
@@ -135,6 +137,19 @@ class dotdict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
+def obervation_noise_concat(observation, number_of_dimensions, noise_level=0.1):
+    """Generates a noise dimension for each of number_of_dimensions and concatenates them to the original observation.
+
+    Args:
+        observation: original obsevation from the env.step() function
+        number_of_dimensions (int): number of dimensions to add to the observation
+        noise_level (float, optional): noise level. Defaults to 0.1.
+    """
+    #print("Adding noise to observation:", observation)
+    
+    array_of_noise = np.random.normal(0, noise_level, number_of_dimensions)
+    #print("Noise added:", array_of_noise)
+    return np.concatenate([observation, array_of_noise])
 
 def main():
     with open('config.yaml', 'r') as file:
@@ -165,9 +180,9 @@ def main():
     else:
         env = gym.make(config.env_id, render_mode="rgb_array")
     
-    # The lambda function will take a number of dimensions and create noise for each dimension, and concatenate them to the original observation.
+    # The lambda function will apply the observation_noise_concat function to the observation
     dimension_wrapper_number = config.dimension_wrapper_number
-    env = TransformObservation(env, lambda obs: np.concatenate(obs, [0.1 * np.random.randn() for _ in range(dimension_wrapper_number)]))
+    env = TransformObservation(env, lambda obs: obervation_noise_concat(obs, dimension_wrapper_number, noise_level=0.1))
 
     if env.action_space.dtype == int:
         network_in = (env.observation_space.shape[0] + dimension_wrapper_number) + env.action_space.n
@@ -252,16 +267,16 @@ def main():
 
     if config.train:
         print("Training initiated...")
-        actor = Policy_MLP(env, device)
-        target_actor = Policy_MLP(env, device)
-        agent = Agent(env, q_network, target_network, actor, target_actor, device, config)
+        actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        agent = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
         train(env, agent, deterministic=False, do_training=True, rendering=False)
 
     if config.test:
         print("Test initiated...")
-        actor = Policy_MLP(env, device)
-        target_actor = Policy_MLP(env, device)
-        agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+        actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
         agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}.pt"))
         # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_CartPole-v1_0_1720385960.pt"))
 
