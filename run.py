@@ -18,6 +18,8 @@ from continuous_cartpole import *
 from wrapper import TransformObservation
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
+from morphing_agents.mujoco.ant.env import MorphingAntEnv
+
 
 def run_episode(
         episode_index, 
@@ -177,8 +179,10 @@ def main():
     print(f"Running environment - {config.env_id}")
     if config.env_id in ["ContinuousCartPoleEnv"]:
         env = ContinuousCartPoleEnv()
+    elif config.env_id in ["MorphingAnt"]:
+        env = MorphingAntEnv(num_legs=config.num_legs, expose_design=False, centered=False)
     else:
-        env = gym.make(config.env_id, render_mode="rgb_array")
+        env = gym.make(config.env_id, render_mode="rgb_array", terminate_when_unhealthy=True)
     
     # The lambda function will apply the observation_noise_concat function to the observation
     dimension_wrapper_number = config.dimension_wrapper_number
@@ -278,7 +282,7 @@ def main():
         target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
         agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
         agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}.pt"))
-        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_CartPole-v1_0_1720385960.pt"))
+        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/EfficientKAN_Ant-v4_2_1721655487.pt"))
 
         for i in range(config.test_n_episodes):
             run_episode(i, env, agent2, deterministic=True, do_training=False, rendering=False)
