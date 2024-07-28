@@ -46,7 +46,7 @@ def run_episode(
             action = env.action_space.sample()
             first_steps += 1
         else:
-            action = agent.act(observation, deterministic, noise_std=0.2)
+            action = agent.act(observation, deterministic)
 
         if do_training and episode_index >= agent.config.warm_up_episodes:
             if agent.config.noise_mean!=0 or agent.config.noise_std!=0:
