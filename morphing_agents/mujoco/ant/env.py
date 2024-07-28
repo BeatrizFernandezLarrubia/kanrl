@@ -12,6 +12,7 @@ import gym
 import pkg_resources
 from gym.spaces import Box
 import pprint
+from morphing_agents.mujoco.ant.elements import LEG
 
 
 class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
@@ -30,7 +31,9 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
                  expose_design=True,
                  healthy_z_range=(0.2, 1.0),
                  terminate_when_unhealthy=True,
-                 normalize_design=True):
+                 normalize_design=True,
+                 render_flag = False,
+                 **kwargs):
         """Build an Ant environment that has a parametric design for training
         morphology-conditioned agents
 
@@ -56,6 +59,8 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self._terminate_when_unhealthy = terminate_when_unhealthy
         self._unhealthy_z_count = 0
         self._unhealthy_z_threshold = 10
+
+        self.render_flag = render_flag
 
         # load the base agent xml file
         xml_path = pkg_resources.resource_filename(
@@ -174,7 +179,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         # build the mujoco environment
         mujoco_env.MujocoEnv.__init__(self, file_path, 5,
                                       observation_space=observation_space)
-        utils.EzPickle.__init__(self)
+        utils.EzPickle.__init__(self, **kwargs)
 
         # remove the temporary file
         os.close(fd)
@@ -183,10 +188,8 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     @property
     def is_healthy(self):
         state = self.state_vector()
-        # print("State: ", state)
-        # print("State Z: ", state[2])
         min_z, max_z = self._healthy_z_range
-        is_healthy = np.isfinite(state).all() and min_z <= state[2] <= max_z
+        is_healthy = np.isfinite(state).all() or min_z <= state[2] <= max_z
         return is_healthy
 
     @property
@@ -198,7 +201,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
             self._unhealthy_z_count += 1
             if self._unhealthy_z_count >= self._unhealthy_z_threshold:
                 terminated = True
-        # print(self._unhealthy_z_count)
+
         return terminated
     
     @property
@@ -233,11 +236,12 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         xposafter = self.get_body_com("torso")[0]
 
         ctrl_cost = .5 * np.square(a).sum()
-        contact_cost = 0.5 * 1e-3 * np.sum(
-            np.square(np.clip(self.data.cfrc_ext, -1, 1)))
+        # contact_cost = 0.5 * 1e-3 * np.sum(
+        #     np.square(np.clip(self.data.cfrc_ext, -1, 1)))
+        contact_cost = 0
 
         forward_reward = (xposafter - xposbefore) / self.dt
-        survive_reward = 1.0
+        survive_reward = 0.1
         reward = forward_reward - ctrl_cost - contact_cost + survive_reward
 
         # only terminate if the simulator generates NaN values
@@ -248,14 +252,20 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         # done = self.terminated
         ob = self._get_obs()
 
-        return ob, reward, self.terminated, self.truncated, dict(
+        if self.render_flag:
+            self.render_mode = "human"
+            self.render()
+
+        info = dict(
             reward_forward=forward_reward,
             reward_ctrl=-ctrl_cost,
             reward_contact=-contact_cost,
             reward_survive=survive_reward)
-    
-    def get_observations(self):
-        return self._get_obs()
+
+        terminated = self.terminated
+        truncated = self.truncated
+
+        return ob, reward, terminated, truncated, info
 
     def _get_obs(self):
         """Get the agent's current observation, which may also include
@@ -270,7 +280,8 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         obs_list = [
             self.data.qpos.flat[2:],
             self.data.qvel.flat,
-            np.clip(self.data.cfrc_ext, -1, 1).flat]
+            # np.clip(self.data.cfrc_ext, -1, 1).flat    # no contact forces
+            ]
         if self.expose_design:
             design = self.design
             if self.normalize_design:
@@ -303,11 +314,12 @@ class MorphingAntEnv(gym.Wrapper, utils.EzPickle):
 
     def __init__(self,
                  num_legs=4,
-                 fixed_design=None,
-                 centered=True,
-                 center=DEFAULT_DESIGN,
-                 noise_std=0.125,
+                #  fixed_design=None,
+                #  centered=True,
+                #  center=DEFAULT_DESIGN,
+                #  noise_std=0.125,
                  retry_at_fail=False,
+                 render_flag=False,
                  **kwargs):
         """Wrap around the AntEnv and provide an interface for randomly
         sampling the design every reset
@@ -329,15 +341,14 @@ class MorphingAntEnv(gym.Wrapper, utils.EzPickle):
         """
 
         self.num_legs = num_legs
-        self.fixed_design = fixed_design
-        self.centered = centered
-        self.center = center
-        self.noise_std = noise_std
+        # self.fixed_design = fixed_design
+        # self.centered = centered
+        # self.center = center
+        # self.noise_std = noise_std
         self.retry_at_fail = retry_at_fail
         self.kwargs = kwargs
         self.is_initialized = False
-        # print("fixed_design: ", fixed_design)
-        # print("centered: ", centered)
+        self.render_flag=render_flag
 
         self.reset()
         utils.EzPickle.__init__(self)
@@ -353,31 +364,42 @@ class MorphingAntEnv(gym.Wrapper, utils.EzPickle):
         """
 
         try:
+            design = []
+            angles = np.linspace(0, 360, self.num_legs+1, dtype=int)[:-1]
+            for angle in angles:
+                design.append(
+                    LEG(x=0.0,
+                        y=0.0,
+                        z=0.0,
+                        a=0,
+                        b=0,
+                        c=angle,
+                        hip_center=0,
+                        hip_range=5,
+                        thigh_center=0,
+                        thigh_range=30,
+                        ankle_center=50,
+                        ankle_range=20,
+                        hip_size=0.2,
+                        thigh_size=0.2,
+                        ankle_size=0.4)
+                )
 
-            if self.fixed_design is None and self.centered:
-                self.is_initialized = False
-                design = sample_centered(
-                    noise_std=self.noise_std, center=self.center)
-
-            elif self.fixed_design is None:
-                self.is_initialized = False
-                design = sample_uniformly(num_legs=self.num_legs)
-
-            else:
-                design = self.fixed_design
 
             if not self.is_initialized:
                 self.is_initialized = True
-                # pprint.pprint(design)
-                # print("design: ", len(design))
-                obs_shape = 23 + self.num_legs*24
+                obs_shape = 11 + self.num_legs*6
                 gym.Wrapper.__init__(
                     self, AntEnv(design=design, 
+                                 render_flag=self.render_flag,
                                  observation_space = Box(
-            low=-np.inf, high=np.inf, shape=(obs_shape,), dtype=np.float64
-        ),
+                                    low=-np.inf, 
+                                    high=np.inf, 
+                                    shape=(obs_shape,), 
+                                    dtype=np.float64
+                                    ),
                                  **self.kwargs))
-                # print("env", self.env)
+
             self.env._step_count = 0
             return self.env.reset(**kwargs)
 

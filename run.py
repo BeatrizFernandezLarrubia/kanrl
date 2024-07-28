@@ -25,8 +25,7 @@ def run_episode(
         agent, 
         do_training=True, 
         deterministic=True, 
-        rendering=False, 
-        random_probability=[],
+        rendering=False,
         log=True
         ):
     
@@ -37,12 +36,24 @@ def run_episode(
     episode_length = 0
     net_reward = 0
 
+    first_steps = 0
+
     while True:
         if do_training and episode_index < agent.config.warm_up_episodes:
             action = env.action_space.sample()
+        elif not do_training and first_steps< 5:
+            # print(f"first steps random {first_steps}")
+            action = env.action_space.sample()
+            first_steps += 1
         else:
-            action = agent.act(observation, deterministic, random_probability)
+            action = agent.act(observation, deterministic, noise_std=0.2)
 
+        if do_training and episode_index >= agent.config.warm_up_episodes:
+            if agent.config.noise_mean!=0 or agent.config.noise_std!=0:
+                noise = np.random.normal(agent.config.noise_mean, agent.config.noise_std, action.shape)
+                action = action + noise
+                action = np.clip(action, agent.env.action_space.low, agent.env.action_space.high)
+            
         next_observation, reward, terminated, truncated, info = env.step(action)
 
         if env.action_space.dtype != int:
@@ -102,26 +113,36 @@ def run_episode(
                 agent.q_network(combined_input, update_grid=True)
                 agent.target_network(combined_input, update_grid=True)
 
-    return agent
+    return agent, net_reward
 
 def train(env, agent, deterministic= True, do_training=True, rendering=False):
     agent.reset_for_train()
     for episode in tqdm(range(agent.config.train_n_episodes), desc=f"{agent.run_name}"):
         if agent.terminate_training: break
-        agent = run_episode(episode, env, agent, deterministic=deterministic, do_training=do_training, rendering=rendering)
+
+        agent, _ = run_episode(episode, env, agent, deterministic=deterministic, do_training=do_training, rendering=rendering)
+
         if math.remainder(episode+1, 10) == 0:
-            # print("Saving model...")
-            torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.run_name}.pt")
+            agent.save_model()
         if math.remainder(episode+1, 50) == 0:
-            print("Testing model...")
-            run_episode(episode, env, agent, deterministic=True, do_training=False, rendering=False, log=False)
+            print("\nTesting model...")
+            test(env, agent, 5, deterministic=True, rendering=rendering, log=False)
+            agent.save_model(f"_{episode}")
 
     if not agent.terminate_training:
-        torch.save(agent.target_actor.state_dict(), f"{agent.config.models_dir}/{agent.run_name}.pt")
-        # agent.target_actor.save_ckpt(f"{agent.config.env_id}_{agent.config.method}.pt")
-    if agent.config.method == "KAN":
+        agent.save_model()
+
+    if agent.config.method in ["KAN", "EfficientKAN"]:
         agent.target_network.plot()
         plt.savefig(f"{agent.config.plots_dir}/{agent.run_name}.png")
+
+def test(env, agent, episodes, deterministic= True, rendering=False, log=True):
+    rewards = []
+    for i in range(episodes):
+        _, reward = run_episode(i, env, agent, deterministic=deterministic, do_training=False, rendering=rendering, log=log)
+        rewards.append(reward)
+    average_reward = sum(rewards) / max(1, len(rewards))
+    print(f"Average reward over {episodes} episodes: {average_reward}")
     
 def set_all_seeds(seed):
     random.seed(seed)
@@ -165,9 +186,18 @@ def main():
     if config.env_id in ["ContinuousCartPoleEnv"]:
         env = ContinuousCartPoleEnv()
     elif config.env_id in ["MorphingAnt"]:
-        env = MorphingAntEnv(num_legs=config.num_legs, expose_design=False, centered=False)
+        env = MorphingAntEnv(num_legs=config.num_legs, 
+                             expose_design=False, 
+                             render_flag=config.render
+                             )
     elif config.env_id in ["Ant-v4"]:
-        env = gym.make(config.env_id, healthy_reward=0.01)
+        if config.render:
+            render_mode = "human"
+        else:
+            render_mode = None
+        env = gym.make(config.env_id, 
+                    #    healthy_reward=0.01,
+                       render_mode=render_mode)
     else:
         env = gym.make(config.env_id, render_mode="rgb_array")
 
@@ -257,18 +287,17 @@ def main():
         actor = Policy_MLP(env, device)
         target_actor = Policy_MLP(env, device)
         agent = Agent(env, q_network, target_network, actor, target_actor, device, config)
-        train(env, agent, deterministic=False, do_training=True, rendering=False)
+        train(env, agent, deterministic=False, do_training=True, rendering=config.render)
 
     if config.test:
         print("Test initiated...")
         actor = Policy_MLP(env, device)
         target_actor = Policy_MLP(env, device)
         agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
-        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}.pt"))
-        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_Ant-v4_0_1720960350.pt"))
+        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}_actor.pt"))
+        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_MorphingAnt_0_1722121326_actor.pt"))
 
-        for i in range(config.test_n_episodes):
-            run_episode(i, env, agent2, deterministic=True, do_training=False, rendering=False)
+        test(env, agent2, config.test_n_episodes, deterministic=True, rendering=config.render, log=True)
 
 if __name__ == "__main__":
     main()

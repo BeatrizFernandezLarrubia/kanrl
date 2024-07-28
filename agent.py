@@ -148,7 +148,7 @@ class Agent:
 
         return loss, actor_loss
     
-    def act(self, observation, deterministic, random_probability=[]):
+    def act(self, observation, deterministic):
         r = np.random.uniform()
         if deterministic or r > self.config.exploration_epsilon:
             action_output = self.actor(
@@ -159,4 +159,9 @@ class Agent:
             action_output = self.env.action_space.sample()
 
         return action_output
+    
+    def save_model(self, suffix=""):
+        torch.save(self.target_actor.state_dict(), f"{self.config.models_dir}/{self.run_name}_actor{suffix}.pt")
+        torch.save(self.target_network.state_dict(), f"{self.config.models_dir}/{self.run_name}_network{suffix}.pt")
+        
 
