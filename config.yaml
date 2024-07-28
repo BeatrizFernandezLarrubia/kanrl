@@ -13,7 +13,7 @@ replay_buffer_capacity: 10000
 width: 256
 grid: 5
 method: "MLP"
-seed: 0
+seed: 2
 tau: 0.01
 device: cuda
 policy_update_frequency: 5
@@ -32,3 +32,4 @@ tolerance: 5
 max_delta_loss: 0.05
 grid_update_frequency: 25
 dimension_wrapper_number: 0
+num_legs: 4
