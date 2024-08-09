@@ -1,3 +1,40 @@
+# SCALABILITY AND ROBUSTNESS OF KANs APPLIED TO REINFORCEMENT LEARNING
+
+## Deep Leaning Lab at Universität Freiburg (Summer Semester 2024)
+
+### Members: Beatriz Fernández Larrubia, Ayisha Ryhana Dawood, Pojen Shih
+### Supervisor: Baohe Zhang
+
+KANs [2] are integrated into the reinforcement learning framework by replacing the MLP component of Deep Q-Networks (DQN), resulting in the Kolmogorov-Arnold Q-Network (KAQN) [3].
+The three points of interest were:
+1.Comparing the performance of KANs and MLPs in environments with varying numbers of distractors.
+2.Evaluating how KANs compare against MLPs in environments with high complexity. (Use MorphingAnt [8] to add arbitrary number of legs to the Ant.)
+
+The code was initially forked from [3]. To mitigate the lengthy processing durations of PyKAN [2], EfficientKAN [5] was adopted to ensure more time-efficient execution.
+
+### Run Ant with multiple legs
+Modify config.yaml with the necessary parameters and run the file run.py - `python -m run`.
+
+The run.py file has the following functionalities:
+1. Train and/or test Ant with arbitrary number of legs.
+2. Render the KAN graph with the target_network.pt file of an already trained agent.
+3. Test multiple actor.pt files, calculate and write mean and standard deviation of the rewards to .csv files.
+
+The plot_rewards.py file can be used to plot the results of the training or testing of the agents.
+
+## References
+
+[1] Liu, Wang, et al. "Kan: Kolmogorov-arnold networks." arXiv:2404.19756 (2024). 
+[2] KAN Github: https://github.com/KindXiaoming/pykan 
+[3] KANrl github: https://github.com/riiswa/kanrl 
+[4] Lillicrap, Timothy P., et al. "Continuous control with deep reinforcement learning." arXiv preprint arXiv:1509.02971 (2015). 
+[5] EfficientKAN github: https://github.com/Blealtan/efficient-kan 
+[6] Ant-v4: https://gymnasium.farama.org/environments/mujoco/ant/ 
+[7] Ni, Tianwei, et al. "Bridging State and History Representations: Understanding Self-Predictive RL." arXiv preprint arXiv:2401.08898 (2024). 
+[8] MorphingAnt github: https://github.com/brandontrabucco/morphing- agents/blob/master/morphing_agents/mujoco/ant/env.py
+
+
+# Original README.md from kanrl [3]
 # Kolmogorov-Arnold Q-Network (KAQN) - KAN applied to Reinforcement learning, initial experiments
 
 This small project test the novel architecture Kolmogorov-Arnold Networks (KAN) in the reinforcement learning paradigm to the CartPole problem. 
