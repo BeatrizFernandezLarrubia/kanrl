@@ -1,11 +1,12 @@
 defaults:
   - override hydra/launcher: joblib
 env_id: MorphingAnt
-num_legs: 6
+num_legs: 3
+healthy_reward: 0.1
 render: false
 # network
 method: "EfficientKAN"
-width: 512
+width: 256
 # training
 device: cpu
 seed: 0

@@ -8,6 +8,7 @@ import yaml
 import numpy as np
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import pandas as pd
 from agent import Agent
 from actor import *
 from kan import KAN
@@ -28,6 +29,9 @@ def run_episode(
         rendering=False,
         log=True
         ):
+    """
+    Run a single episode with the given configuration and return reward. Perform early stopping if necessary. Write the results to tensorboard. Update the networks periodically.
+    """
     
     observation, info = env.reset()
     observation = torch.from_numpy(observation)
@@ -42,7 +46,6 @@ def run_episode(
         if do_training and episode_index < agent.config.warm_up_episodes:
             action = env.action_space.sample()
         elif not do_training and first_steps< 5:
-            # print(f"first steps random {first_steps}")
             action = env.action_space.sample()
             first_steps += 1
         else:
@@ -98,7 +101,7 @@ def run_episode(
         if agent.current_loss != 9999:
             agent.previous_loss = agent.current_loss
         agent.current_loss = loss_value
-        # agent.check_early_stopping()
+        agent.check_early_stopping()
 
         if (
             math.remainder(episode_index+1, agent.config.grid_update_frequency) == 0
@@ -116,6 +119,9 @@ def run_episode(
     return agent, net_reward
 
 def train(env, agent, deterministic= True, do_training=True, rendering=False):
+    """
+    Run n episodes and train the network by periodically updating the networks in the agent.
+    """
     agent.reset_for_train()
     for episode in tqdm(range(agent.config.train_n_episodes), desc=f"{agent.run_name}"):
         if agent.terminate_training: break
@@ -137,12 +143,16 @@ def train(env, agent, deterministic= True, do_training=True, rendering=False):
         plt.savefig(f"{agent.config.plots_dir}/{agent.run_name}.png")
 
 def test(env, agent, episodes, deterministic= True, rendering=False, log=True):
+    """
+    Run n episodes and return average reward and the reward for each episode.
+    """
     rewards = []
     for i in range(episodes):
         _, reward = run_episode(i, env, agent, deterministic=deterministic, do_training=False, rendering=rendering, log=log)
         rewards.append(reward)
     average_reward = sum(rewards) / max(1, len(rewards))
     print(f"Average reward over {episodes} episodes: {average_reward}")
+    return average_reward, rewards
     
 def set_all_seeds(seed):
     random.seed(seed)
@@ -158,13 +168,10 @@ class dotdict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-
-def main():
-    with open('config.yaml', 'r') as file:
-        config = yaml.safe_load(file)
-        config = dotdict(config)
-        pprint.pprint(config)
-        
+def set_parameters_by_config(config):
+    """
+    Set the parameters and create objects required for the agent according to the config file.
+    """
     if config.device == "mps" and torch.backends.mps.is_available():
         device_name = "mps"
     elif config.device == "cuda" and torch.cuda.is_available():
@@ -188,7 +195,8 @@ def main():
     elif config.env_id in ["MorphingAnt"]:
         env = MorphingAntEnv(num_legs=config.num_legs, 
                              expose_design=False, 
-                             render_flag=config.render
+                             render_flag=config.render,
+                             healthy_reward=config.healthy_reward
                              )
     elif config.env_id in ["Ant-v4"]:
         if config.render:
@@ -196,7 +204,7 @@ def main():
         else:
             render_mode = None
         env = gym.make(config.env_id, 
-                    #    healthy_reward=0.01,
+                       healthy_reward=config.healthy_reward,
                        render_mode=render_mode)
     else:
         env = gym.make(config.env_id, render_mode="rgb_array")
@@ -230,41 +238,21 @@ def main():
         q_network = EfficientKAN(
 			layers_hidden=[network_in, config.width, 1],
 			grid_size=config.grid,
-			spline_order=3,
-			# bias_trainable=False,
-			# sp_trainable=False,
-			# sb_trainable=False,
-            # device=device_name
+			spline_order=3
 		).to(device)
         target_network = EfficientKAN(
 			layers_hidden=[network_in, config.width, 1],
 			grid_size=config.grid,
-			spline_order=3,
-			# bias_trainable=False,
-			# sp_trainable=False,
-			# sb_trainable=False,
-            # device=device_name
+			spline_order=3
 		).to(device)
     elif config.method == "FastKAN":
         q_network = FastKAN(
 			layers_hidden=[network_in, config.width, 1],
-			num_grids=config.grid,
-			# exponent=3,
-            # train_grid = True
-			# bias_trainable=False,
-			# sp_trainable=False,
-			# sb_trainable=False,
-            # device=device_name
+			num_grids=config.grid
 		).to(device)
         target_network = FastKAN(
 			layers_hidden=[network_in, config.width, 1],
-			num_grids=config.grid,
-			# exponent=3,
-            # train_grid = True
-			# bias_trainable=False,
-			# sp_trainable=False,
-			# sb_trainable=False,
-            # device=device_name
+			num_grids=config.grid
 		).to(device)
     elif config.method == "MLP":
         q_network = nn.Sequential(
@@ -281,6 +269,28 @@ def main():
         raise Exception(
             f"Method {config.method} don't exist."
         )
+    return {
+        "device": device,
+        "device_name": device_name,
+        "q_network": q_network,
+        "target_network": target_network,
+        "network_in": network_in,
+        "env": env
+    }
+
+def main():
+    """
+    Read the config file and perform train and/or test operations.
+    """
+    with open('config.yaml', 'r') as file:
+        config = yaml.safe_load(file)
+        config = dotdict(config)
+        
+    parameters = set_parameters_by_config(config)
+    device = parameters["device"]
+    env = parameters["env"]
+    q_network = parameters["q_network"]
+    target_network = parameters["target_network"]
 
     if config.train:
         print("Training initiated...")
@@ -295,9 +305,124 @@ def main():
         target_actor = Policy_MLP(env, device)
         agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
         agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}_actor.pt"))
-        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/MLP_MorphingAnt_0_1722121326_actor.pt"))
 
         test(env, agent2, config.test_n_episodes, deterministic=True, rendering=config.render, log=True)
 
+def test_bulk(file_name, num_legs, es_epoch):
+    """
+    Test model over n episodes and calculate mean and std of the rewards.
+    """
+    with open('config.yaml', 'r') as file:
+        config = yaml.safe_load(file)
+        config = dotdict(config)
+        config["num_legs"] = num_legs
+        config["method"] = file_name.split("_")[0]
+        pprint.pprint(config)
+        
+    parameters = set_parameters_by_config(config)
+    device = parameters["device"]
+    env = parameters["env"]
+    q_network = parameters["q_network"]
+    target_network = parameters["target_network"]
+
+    actor = Policy_MLP(env, device)
+    target_actor = Policy_MLP(env, device)
+    agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+
+    if es_epoch!=0:
+        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor_{es_epoch}.pt", map_location=torch.device('cpu')))
+    else:
+        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor.pt", map_location=torch.device('cpu')))
+
+    _, rewards_list = test(env, agent2, config.test_n_episodes, deterministic=True, rendering=config.render, log=True)
+    rewards_list = np.array(rewards_list)
+
+    mean_reward = np.mean(rewards_list)
+    std_reward = np.std(rewards_list)
+
+    return mean_reward, std_reward
+
+def test_bulk_driver():
+    """
+    Driver function to test multiple models over n episodes and calculate mean and std of the rewards.
+    """
+    test_list = [
+            ["EfficientKAN_MorphingAnt_0_1722319702", 3, 0.2, 999],
+            ["EfficientKAN_MorphingAnt_0_1721917306", 4, 0.2, 0],
+            ["EfficientKAN_MorphingAnt_0_1722203246", 5, 0.2, 749],
+            ["EfficientKAN_MorphingAnt_0_1722204441", 6, 0.2, 999],
+            ["EfficientKAN_MorphingAnt_0_1722203855", 7, 0.2, 749],
+            ["MLP_MorphingAnt_0_1722342048", 3, 0.2, 999],
+            ["MLP_MorphingAnt_0_1722121326", 4, 0.2, 999],
+            ["MLP_MorphingAnt_0_1722154175", 5, 0.2, 799],
+            ["MLP_MorphingAnt_0_1722247036", 6, 0.2, 499],
+            ["MLP_MorphingAnt_0_1722391642", 7, 0.2, 999]
+    ]
+    # test_list = [
+    #         ["EfficientKAN_MorphingAnt_0_1721726361", 4, 0.0, 699],
+    #         ["EfficientKAN_MorphingAnt_0_1721857925", 4, 0.2, 0],
+    #         ["EfficientKAN_MorphingAnt_0_1722028514", 4, 0.4, 749],
+    #         ["MLP_MorphingAnt_0_1722296073", 4, 0.0, 199],
+    #         ["MLP_MorphingAnt_0_1722319667", 4, 0.2, 999],
+    #         ["MLP_MorphingAnt_0_1722365973", 4, 0.4, 449],
+    #         # ["EfficientKAN_MorphingAnt_0_1721726361", 4, 0.0, 999],
+    #         # ["EfficientKAN_MorphingAnt_0_1721857925", 4, 0.2, 99],
+    #         # ["EfficientKAN_MorphingAnt_0_1722028514", 4, 0.4, 749],
+    #         # ["MLP_MorphingAnt_0_1722296073", 4, 0.0, 999],
+    #         # ["MLP_MorphingAnt_0_1722319667", 4, 0.2, 999],
+    #         # ["MLP_MorphingAnt_0_1722365973", 4, 0.4, 999],
+    #     ]
+    df = pd.DataFrame(columns=["num_legs",
+                               "method",
+                               "noise",
+                               "num_epochs",
+                               "file_name",
+                               "mean_reward",
+                               "std_reward"])
+    for meta in test_list:
+        mean_reward, std_reward = test_bulk(
+            meta[0], meta[1], meta[3]
+        )
+        reward_row = pd.DataFrame([{
+            "num_legs": meta[1],
+            "method": meta[0].split("_")[0],
+            "noise": meta[2],
+            "num_epochs": meta[3],
+            "file_name": meta[0],
+            "mean_reward": mean_reward,
+            "std_reward":std_reward
+        }])
+        df = pd.concat([df, reward_row], ignore_index=True)
+    print(df)
+    df.to_csv("final_test/test.csv")     
+
+def plot_kan(file_name):
+    """
+    Plot the KAN graphs of the model that help with visual inferences.
+    """
+    with open('config.yaml', 'r') as file:
+        config = yaml.safe_load(file)
+        config = dotdict(config)
+        config["method"] = file_name.split("_")[0]
+        pprint.pprint(config)
+        
+    parameters = set_parameters_by_config(config)
+    device = parameters["device"]
+    env = parameters["env"]
+    q_network = parameters["q_network"]
+    target_network = parameters["target_network"]
+
+    actor = Policy_MLP(env, device)
+    target_actor = Policy_MLP(env, device)
+    agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+
+    agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor.pt", map_location=torch.device('cpu')))
+    agent2.target_network.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_network.pt", map_location=torch.device('cpu')))
+
+    agent2.target_network.plot(beta=0.5)
+    plt.savefig(f"{agent2.config.plots_dir}/{agent2.run_name}_v2.png")
+
 if __name__ == "__main__":
     main()
+    # plot_kan("EfficientKAN_MorphingAnt_0_1721917306")
+    # test_bulk_driver()

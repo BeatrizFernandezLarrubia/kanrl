@@ -33,6 +33,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
                  terminate_when_unhealthy=True,
                  normalize_design=True,
                  render_flag = False,
+                 healthy_reward=1.0,
                  **kwargs):
         """Build an Ant environment that has a parametric design for training
         morphology-conditioned agents
@@ -61,6 +62,8 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self._unhealthy_z_threshold = 10
 
         self.render_flag = render_flag
+
+        self.healthy_reward = healthy_reward
 
         # load the base agent xml file
         xml_path = pkg_resources.resource_filename(
@@ -189,7 +192,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def is_healthy(self):
         state = self.state_vector()
         min_z, max_z = self._healthy_z_range
-        is_healthy = np.isfinite(state).all() or min_z <= state[2] <= max_z
+        is_healthy = np.isfinite(state).all() and min_z <= state[3] <= max_z
         return is_healthy
 
     @property
@@ -241,7 +244,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         contact_cost = 0
 
         forward_reward = (xposafter - xposbefore) / self.dt
-        survive_reward = 0.1
+        survive_reward = self.healthy_reward
         reward = forward_reward - ctrl_cost - contact_cost + survive_reward
 
         # only terminate if the simulator generates NaN values
@@ -318,6 +321,7 @@ class MorphingAntEnv(gym.Wrapper, utils.EzPickle):
                 #  centered=True,
                 #  center=DEFAULT_DESIGN,
                 #  noise_std=0.125,
+                 healthy_reward=1.0,
                  retry_at_fail=False,
                  render_flag=False,
                  **kwargs):
@@ -345,6 +349,7 @@ class MorphingAntEnv(gym.Wrapper, utils.EzPickle):
         # self.centered = centered
         # self.center = center
         # self.noise_std = noise_std
+        self.healthy_reward = healthy_reward
         self.retry_at_fail = retry_at_fail
         self.kwargs = kwargs
         self.is_initialized = False
@@ -398,6 +403,7 @@ class MorphingAntEnv(gym.Wrapper, utils.EzPickle):
                                     shape=(obs_shape,), 
                                     dtype=np.float64
                                     ),
+                                 healthy_reward=self.healthy_reward, 
                                  **self.kwargs))
 
             self.env._step_count = 0

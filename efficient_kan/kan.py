@@ -286,124 +286,41 @@ class KAN(torch.nn.Module):
     def plot(self, folder="./figures", beta=3, mask=False, mode="supervised", scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None):
         '''
         plot KAN - modified function from KAN package
-        
-        Args:
-        -----
-            folder : str
-                the folder to store pngs
-            beta : float
-                positive number. control the transparency of each activation. transparency = tanh(beta*l1).
-            mask : bool
-                If True, plot with mask (need to run prune() first to obtain mask). If False (by default), plot all activation functions.
-            mode : bool
-                "supervised" or "unsupervised". If "supervised", l1 is measured by absolution value (not subtracting mean); if "unsupervised", l1 is measured by standard deviation (subtracting mean).
-            scale : float
-                control the size of the diagram
-            in_vars: None or list of str
-                the name(s) of input variables
-            out_vars: None or list of str
-                the name(s) of output variables
-            title: None or str
-                title
-            
-        Returns:
-        --------
-            Figure
-            
-        Example
-        -------
-        >>> # see more interactive examples in demos
-        >>> model = KAN(width=[2,3,1], grid=3, k=3, noise_scale=1.0)
-        >>> x = torch.normal(0,1,size=(100,2))
-        >>> model(x) # do a forward pass to obtain model.acts
-        >>> model.plot()
         '''
-        # for layer in self.layers:
-        #     print(layer.spline_weight)
-        #     print(layer.spline_weight.shape)
         if not os.path.exists(folder):
             os.makedirs(folder)
-        # matplotlib.use('Agg')
         depth = len(self.width) - 1
-        # for l in range(depth):
-        #     w_large = 2.0
-        #     for i in range(self.width[l]):
-        #         for j in range(self.width[l + 1]):
-        #             rank = torch.argsort(self.acts[l][:, i])
-        #             fig, ax = plt.subplots(figsize=(w_large, w_large))
-
-        #             num = rank.shape[0]
-
-        #             symbol_mask = self.symbolic_fun[l].mask[j][i]
-        #             numerical_mask = self.act_fun[l].mask.reshape(self.width[l + 1], self.width[l])[j][i]
-        #             if symbol_mask > 0. and numerical_mask > 0.:
-        #                 color = 'purple'
-        #                 alpha_mask = 1
-        #             if symbol_mask > 0. and numerical_mask == 0.:
-        #                 color = "red"
-        #                 alpha_mask = 1
-        #             if symbol_mask == 0. and numerical_mask > 0.:
-        #                 color = "black"
-        #                 alpha_mask = 1
-        #             if symbol_mask == 0. and numerical_mask == 0.:
-        #                 color = "white"
-        #                 alpha_mask = 0
-
-        #             if tick == True:
-        #                 ax.tick_params(axis="y", direction="in", pad=-22, labelsize=50)
-        #                 ax.tick_params(axis="x", direction="in", pad=-15, labelsize=50)
-        #                 x_min, x_max, y_min, y_max = self.get_range(l, i, j, verbose=False)
-        #                 plt.xticks([x_min, x_max], ['%2.f' % x_min, '%2.f' % x_max])
-        #                 plt.yticks([y_min, y_max], ['%2.f' % y_min, '%2.f' % y_max])
-        #             else:
-        #                 plt.xticks([])
-        #                 plt.yticks([])
-        #             if alpha_mask == 1:
-        #                 plt.gca().patch.set_edgecolor('black')
-        #             else:
-        #                 plt.gca().patch.set_edgecolor('white')
-        #             plt.gca().patch.set_linewidth(1.5)
-        #             # plt.axis('off')
-
-        #             plt.plot(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, lw=5)
-        #             if sample == True:
-        #                 plt.scatter(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, s=400 * scale ** 2)
-        #             plt.gca().spines[:].set_color(color)
-
-        #             lock_id = self.act_fun[l].lock_id[j * self.width[l] + i].long().item()
-        #             if lock_id > 0:
-        #                 im = plt.imread(f'{folder}/lock.png')
-        #                 newax = fig.add_axes([0.15, 0.7, 0.15, 0.15])
-        #                 plt.text(500, 400, lock_id, fontsize=15)
-        #                 newax.imshow(im)
-        #                 newax.axis('off')
-
-        #             plt.savefig(f'{folder}/sp_{l}_{i}_{j}.png', bbox_inches="tight", dpi=400)
-        #             plt.close()
-
+        
         def score2alpha(score):
             return np.tanh(beta * score)
 
         alpha = []
+        epsilon = 1e-40
+        combined = np.zeros(shape=(0))
         for layer in self.layers:
-            # print(layer.spline_weight)
-            # print(layer.spline_weight.shape)
-            score_alpha = score2alpha(torch.mean(torch.abs(layer.spline_weight), dim=-1).cpu().detach().numpy())
-            # print(score_alpha)
-            # print(score_alpha.shape)
+            score_alpha = score2alpha(torch.abs(torch.mean(layer.scaled_spline_weight, dim=-1)).cpu().detach().numpy())
             alpha.append(score_alpha)
+            combined = np.concatenate((combined, score_alpha.flatten()))
 
-        # if mode == "supervised":
-        #     alpha = [score2alpha(score.cpu().detach().numpy()) for score in self.acts_scale]
-        # elif mode == "unsupervised":
-        #     alpha = [score2alpha(score.cpu().detach().numpy()) for score in self.acts_scale_std]
+        global_log_min = combined.min()
+        global_log_max = combined.max()
+        def scale_mean(array, global_mean, global_std):
+            return (array - global_mean) / global_std
+        def scale_minmax(array, min_val, max_val):
+            return (array - min_val) / (max_val - min_val)
+
+        scaled_alpha = []
+        for alpha_array in alpha:
+            temp= np.abs(scale_minmax(alpha_array, global_log_min, global_log_max))
+            print(temp)
+            scaled_alpha.append(temp)
+        alpha = scaled_alpha
 
         # draw skeleton
         width = np.array(self.width)
         A = 1
         y0 = 0.4  # 0.4
 
-        # plt.figure(figsize=(5,5*(neuron_depth-1)*y0))
         neuron_depth = len(width)
         min_spacing = A / np.maximum(np.max(width), 5)
 
@@ -412,7 +329,6 @@ class KAN(torch.nn.Module):
         y1 = 0.4 / np.maximum(max_num_weights, 3)
 
         fig, ax = plt.subplots(figsize=(10 * scale, 10 * scale * (neuron_depth - 1) * y0))
-        # fig, ax = plt.subplots(figsize=(5,5*(neuron_depth-1)*y0))
 
         # plot scatters and lines
         for l in range(neuron_depth):
@@ -429,20 +345,6 @@ class KAN(torch.nn.Module):
                         id_ = i * n_next + j
                         color = "black"
                         alpha_mask = 1.
-                        # symbol_mask = self.symbolic_fun[l].mask[j][i]
-                        # numerical_mask = self.act_fun[l].mask.reshape(self.width[l + 1], self.width[l])[j][i]
-                        # if symbol_mask == 1. and numerical_mask == 1.:
-                        #     color = 'purple'
-                        #     alpha_mask = 1.
-                        # if symbol_mask == 1. and numerical_mask == 0.:
-                        #     color = "red"
-                        #     alpha_mask = 1.
-                        # if symbol_mask == 0. and numerical_mask == 1.:
-                        #     color = "black"
-                        #     alpha_mask = 1.
-                        # if symbol_mask == 0. and numerical_mask == 0.:
-                        #     color = "white"
-                        #     alpha_mask = 0.
                         if mask == True:
                             plt.plot([1 / (2 * n) + i / n, 1 / (2 * N) + id_ / N], [l * y0, (l + 1 / 2) * y0 - y1], color=color, lw=2 * scale, alpha=alpha[l][j][i] * self.mask[l][i].item() * self.mask[l + 1][j].item())
                             plt.plot([1 / (2 * N) + id_ / N, 1 / (2 * n_next) + j / n_next], [(l + 1 / 2) * y0 + y1, (l + 1) * y0], color=color, lw=2 * scale, alpha=alpha[l][j][i] * self.mask[l][i].item() * self.mask[l + 1][j].item())
@@ -469,18 +371,11 @@ class KAN(torch.nn.Module):
                 N = n * n_next
                 for j in range(n_next):
                     id_ = i * n_next + j
-                    # im = plt.imread(f'{folder}/sp_{l}_{i}_{j}.png')
                     left = DC_to_NFC([1 / (2 * N) + id_ / N - y1, 0])[0]
                     right = DC_to_NFC([1 / (2 * N) + id_ / N + y1, 0])[0]
                     bottom = DC_to_NFC([0, (l + 1 / 2) * y0 - y1])[1]
                     up = DC_to_NFC([0, (l + 1 / 2) * y0 + y1])[1]
                     newax = fig.add_axes([left, bottom, right - left, up - bottom])
-                    # newax = fig.add_axes([1/(2*N)+id_/N-y1, (l+1/2)*y0-y1, y1, y1], anchor='NE')
-                    # if mask == False:
-                    #     newax.imshow(im, alpha=alpha[l][j][i])
-                    # else:
-                    #     ### make sure to run model.prune() first to compute mask ###
-                    #     newax.imshow(im, alpha=alpha[l][j][i] * self.mask[l][i].item() * self.mask[l + 1][j].item())
                     newax.axis('off')
 
         if in_vars != None:
