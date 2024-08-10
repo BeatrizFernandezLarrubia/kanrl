@@ -4,12 +4,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class Policy_MLP(nn.Module):
-    def __init__(self, env, device):
+    def __init__(self, env, device, dimension_wrapper_number=0):
         super().__init__()
         self.device = device
         self.env = env
         self.node_count = 256
-        self.fc1 = nn.Linear(np.array(env.observation_space.shape[0]).prod(), self.node_count, device=self.device)
+        self.fc1 = nn.Linear(np.array(env.observation_space.shape[0] + dimension_wrapper_number).prod(), self.node_count, device=self.device)
         self.fc2 = nn.Linear(self.node_count, self.node_count, device=self.device)
         if env.action_space.dtype == int:
             self.fc_mu = nn.Linear(self.node_count, np.prod(env.action_space.n), device=self.device)

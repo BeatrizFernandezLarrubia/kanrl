@@ -17,6 +17,9 @@ from fasterkan.fasterkan import FasterKAN, FasterKANvolver
 from fastkan.fastkan import FastKAN
 from tqdm import tqdm
 from continuous_cartpole import *
+from wrapper import TransformObservation
+os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+
 from morphing_agents.mujoco.ant.env import MorphingAntEnv
 
 
@@ -168,6 +171,20 @@ class dotdict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
+def obervation_noise_concat(observation, number_of_dimensions, noise_level=0.1):
+    """Generates a noise dimension for each of number_of_dimensions and concatenates them to the original observation.
+
+    Args:
+        observation: original obsevation from the env.step() function
+        number_of_dimensions (int): number of dimensions to add to the observation
+        noise_level (float, optional): noise level. Defaults to 0.1.
+    """
+    #print("Adding noise to observation:", observation)
+    
+    array_of_noise = np.random.normal(0, noise_level, number_of_dimensions)
+    #print("Noise added:", array_of_noise)
+    return np.concatenate([observation, array_of_noise])
+
 def set_parameters_by_config(config):
     """
     Set the parameters and create objects required for the agent according to the config file.
@@ -207,12 +224,16 @@ def set_parameters_by_config(config):
                        healthy_reward=config.healthy_reward,
                        render_mode=render_mode)
     else:
-        env = gym.make(config.env_id, render_mode="rgb_array")
+        env = gym.make(config.env_id, render_mode="rgb_array", terminate_when_unhealthy=True)
+    
+    # The lambda function will apply the observation_noise_concat function to the observation
+    dimension_wrapper_number = config.dimension_wrapper_number
+    env = TransformObservation(env, lambda obs: obervation_noise_concat(obs, dimension_wrapper_number, noise_level=0.1))
 
     if env.action_space.dtype == int:
-        network_in = env.observation_space.shape[0] + env.action_space.n
+        network_in = (env.observation_space.shape[0] + dimension_wrapper_number) + env.action_space.n
     else:
-        network_in = env.observation_space.shape[0] + env.action_space.shape[0]
+        network_in = (env.observation_space.shape[0] + dimension_wrapper_number) + env.action_space.shape[0]
     print(f"Observation space: {env.observation_space}\nAction space: {env.action_space}\nNetwork in: {network_in}")
     
     if config.method == "KAN":
@@ -274,6 +295,7 @@ def set_parameters_by_config(config):
         "device_name": device_name,
         "q_network": q_network,
         "target_network": target_network,
+        "dimension_wrapper_number": dimension_wrapper_number,
         "network_in": network_in,
         "env": env
     }
@@ -291,20 +313,22 @@ def main():
     env = parameters["env"]
     q_network = parameters["q_network"]
     target_network = parameters["target_network"]
+    dimension_wrapper_number = parameters["dimension_wrapper_number"]
 
     if config.train:
         print("Training initiated...")
-        actor = Policy_MLP(env, device)
-        target_actor = Policy_MLP(env, device)
-        agent = Agent(env, q_network, target_network, actor, target_actor, device, config)
+        actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        agent = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
         train(env, agent, deterministic=False, do_training=True, rendering=config.render)
 
     if config.test:
         print("Test initiated...")
-        actor = Policy_MLP(env, device)
-        target_actor = Policy_MLP(env, device)
-        agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+        actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+        agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
         agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{agent.run_name}_actor.pt"))
+        # agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/EfficientKAN_Ant-v4_2_1721655487.pt"))
 
         test(env, agent2, config.test_n_episodes, deterministic=True, rendering=config.render, log=True)
 
@@ -324,17 +348,18 @@ def test_bulk(file_name, num_legs, es_epoch):
     env = parameters["env"]
     q_network = parameters["q_network"]
     target_network = parameters["target_network"]
+    dimension_wrapper_number = parameters["dimension_wrapper_number"]
 
-    actor = Policy_MLP(env, device)
-    target_actor = Policy_MLP(env, device)
-    agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+    actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+    target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+    agent = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
 
     if es_epoch!=0:
-        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor_{es_epoch}.pt", map_location=torch.device('cpu')))
+        agent.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor_{es_epoch}.pt", map_location=torch.device('cpu')))
     else:
-        agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor.pt", map_location=torch.device('cpu')))
+        agent.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor.pt", map_location=torch.device('cpu')))
 
-    _, rewards_list = test(env, agent2, config.test_n_episodes, deterministic=True, rendering=config.render, log=True)
+    _, rewards_list = test(env, agent, config.test_n_episodes, deterministic=True, rendering=config.render, log=True)
     rewards_list = np.array(rewards_list)
 
     mean_reward = np.mean(rewards_list)
@@ -411,16 +436,17 @@ def plot_kan(file_name):
     env = parameters["env"]
     q_network = parameters["q_network"]
     target_network = parameters["target_network"]
+    dimension_wrapper_number = parameters["dimension_wrapper_number"]
 
-    actor = Policy_MLP(env, device)
-    target_actor = Policy_MLP(env, device)
-    agent2 = Agent(env, q_network, target_network, actor, target_actor, device, config)
+    actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+    target_actor = Policy_MLP(env, device, dimension_wrapper_number=dimension_wrapper_number)
+    agent = Agent(env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=dimension_wrapper_number)
 
-    agent2.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor.pt", map_location=torch.device('cpu')))
-    agent2.target_network.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_network.pt", map_location=torch.device('cpu')))
+    agent.actor.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_actor.pt", map_location=torch.device('cpu')))
+    agent.target_network.load_state_dict(torch.load(f"{config.models_dir}/{file_name}_network.pt", map_location=torch.device('cpu')))
 
-    agent2.target_network.plot(beta=0.5)
-    plt.savefig(f"{agent2.config.plots_dir}/{agent2.run_name}_v2.png")
+    agent.target_network.plot(beta=0.5)
+    plt.savefig(f"{agent.config.plots_dir}/{agent.run_name}_v2.png")
 
 if __name__ == "__main__":
     main()

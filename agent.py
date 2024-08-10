@@ -9,7 +9,7 @@ from buffer import ReplayBuffer
 from kan import KAN
 
 class Agent:
-    def __init__(self, env, q_network, target_network, actor, target_actor, device, config):
+    def __init__(self, env, q_network, target_network, actor, target_actor, device, config, dimension_wrapper_number=0):
         self.method = config.method
         self.env = env
         self.config = config
@@ -42,7 +42,7 @@ class Agent:
         
         self.buffer = ReplayBuffer(
             capacity=config.replay_buffer_capacity,
-            observation_dim=env.observation_space.shape[0],
+            observation_dim=env.observation_space.shape[0] + dimension_wrapper_number,
             action_dim=env.action_space.n if env.action_space.dtype == int else env.action_space.shape[0]
             )
 

@@ -312,7 +312,6 @@ class KAN(torch.nn.Module):
         scaled_alpha = []
         for alpha_array in alpha:
             temp= np.abs(scale_minmax(alpha_array, global_log_min, global_log_max))
-            print(temp)
             scaled_alpha.append(temp)
         alpha = scaled_alpha
 

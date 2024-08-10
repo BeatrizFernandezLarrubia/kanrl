@@ -28,6 +28,8 @@ grid_update_frequency: 25
 exploration_epsilon: 0.1
 noise_mean: 0.0
 noise_std: 0.2
+action_buffer: 5
+dimension_wrapper_number: 0
 # early stopping
 tolerance: 5
 max_delta_loss: 0.05
