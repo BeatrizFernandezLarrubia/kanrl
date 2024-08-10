@@ -17,8 +17,9 @@ Modify config.yaml with the necessary parameters and run the file run.py - `pyth
 
 The run.py file has the following functionalities:
 1. Train and/or test Ant with arbitrary number of legs.
-2. Render the KAN graph with the target_network.pt file of an already trained agent.
-3. Test multiple actor.pt files, calculate and write mean and standard deviation of the rewards to .csv files.
+2. Add distractors to the observation space.
+3. Render the KAN graph with the target_network.pt file of an already trained agent.
+4. Test multiple actor.pt files, calculate and write mean and standard deviation of the rewards to .csv files.
 
 The plot_rewards.py file can be used to plot the results of the training or testing of the agents.
 
